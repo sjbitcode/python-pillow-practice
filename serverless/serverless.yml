@@ -1,0 +1,29 @@
+service: sangeeta-py-pillow
+
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: python3.9
+  region: us-east-1
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - 's3:*'
+            - 's3-object-lambda:*'
+          Resource:
+            - '*'
+
+functions:
+  hello:
+    handler: handler.hello
+    environment:
+      ORIGINAL_IMG_BUCKET_NAME: 'sangeeta-original-images'
+      RESIZED_IMG_BUCKET_NAME: 'sangeeta-transformed-images'
+    layers:
+      - arn:aws:lambda:${self:provider.region}:770693421928:layer:Klayers-p39-pillow:1
+
+plugins:
+  - serverless-python-requirements
