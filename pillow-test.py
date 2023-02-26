@@ -1,12 +1,12 @@
 import io
 import os
 
-import boto3
+# import boto3
 from PIL import Image
 
 
-os.environ['AWS_PROFILE'] = "aws-test"
-s3 = boto3.client('s3', region_name='us-east-1')
+# os.environ['AWS_PROFILE'] = "aws-test"
+# s3 = boto3.client('s3', region_name='us-east-1')
 
 # bucket_name = 'sangeeta-original-images'
 # resized_image_bucket_name = 'sangeeta-transformed-images'
@@ -36,19 +36,19 @@ s3 = boto3.client('s3', region_name='us-east-1')
 #     s3.put_object(Bucket=resized_image_bucket_name, Key=img.filename, Body=buffer)
 
 
-our_image = read_img()
-resize(our_image)
-write_img(our_image)
+# our_image = read_img()
+# resize(our_image)
+# write_img(our_image)
 
 img = Image.open("img/coffee.jpg")
 print(img.format, img.size, img.mode)
 
-img.thumbnail((img.width // 2, img.height // 2))
+# img.thumbnail((img.width // 2, img.height // 2))
 
-buffer = io.BytesIO()
-img.save(buffer, format=img.format)
-buffer.seek(0)  # rewind pointer back to start
+# buffer = io.BytesIO()
+# img.save(buffer, format=img.format)
+# buffer.seek(0)  # rewind pointer back to start
 
-img.filename = f'{img.filename}-resized.jpg'
+# img.filename = f'{img.filename}-resized.jpg'
 
-s3.put_object(Bucket='sangeeta-original-images', Key='resized-image.jpg', Body=buffer)
+# s3.put_object(Bucket='sangeeta-original-images', Key='resized-image.jpg', Body=buffer)
