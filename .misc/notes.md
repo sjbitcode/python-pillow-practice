@@ -115,6 +115,9 @@ AWS Lambda has a 6 MB invocation payload request and response limit ([reference]
   - https://blog.cloudflare.com/introducing-polish-automatic-image-optimizati/
   - https://webmasters.stackexchange.com/questions/136565/can-i-use-cloudflare-to-remove-gps-location-data-from-the-exif-metadata-of-image
   - https://blog.cloudflare.com/a-very-webp-new-year-from-cloudflare/ (GOOD ARTICLE)
+  - https://community.cloudflare.com/t/polish-webp-optimization-apparently-not-working/78041
+  - https://community.cloudflare.com/t/cloudflare-polish-compressing-only-minimally/209463/4
+  - https://developers.cloudflare.com/images/faq/
 - Resize images with CloudFlare either with pre-defined URL or image workers (https://developers.cloudflare.com/images/image-resizing/)
 - CloudFlare polished header info
   - https://exabytes.freshdesk.com/en/support/solutions/articles/14000100604-using-cloudflare-polish-to-compress-images#:~:text=The%20cf%2Dpolished%20header%20represents,and%20Polish%20can%20be%20applied.
@@ -209,5 +212,6 @@ why is this returning avif??
 - `http://g.foolcdn.com/image/?url=https%3A%2F%2Fg.foolcdn.com%2Feditorial%2Fimages%2F519403%2Fgetty-danger-warning-lose-money-mistakes-errors-caution.jpg&w=700&op=resize&format=webp`
 - `https://app.datadoghq.com/logs?query=service%3Afoolcdn.com%20%28%28%40http.url_details.host%3Ag.foolcdn.com%20OR%20%40http.url_details.host%3Am.foolcdn.com%29%29%20%20%20%20%20%20%20%20%40http.url_details.queryString.format%3Awebp&additional_filters=%5B%7B%7D%5D&cols=host%2Cservice&event=AQAAAYa61_aoFOPWnQAAAABBWWE2MkdJZUFBRGdoLXJtNFRCV0t3RXU&index=&messageDisplay=inline&stream_sort=time%2Cdesc&viz=stream&from_ts=1676230756265&to_ts=1676317156265&live=true`
 
-- test mutliple of the same query params
-- 
+- test multiple of the same query params
+- if png has background added, convert to jpg from 
+  - 

@@ -14,7 +14,8 @@ from pydantic import (
     conint,
     confloat,
     NonNegativeInt,
-    NonNegativeFloat
+    NonNegativeFloat,
+    PrivateAttr
 )
 from pydantic.color import Color
 
@@ -85,6 +86,9 @@ class ImageOptions(BaseModel):
         "1,2,3,4"          TrimPixels(top=1, right=2, bottom=3, left=4)
         "1.1, 2.5, 3, 4"   TrimPixels(top=1, right=2, bottom=3, left=4)
         """
+        if isinstance(values, TrimPixels):
+            return values
+
         try:
             pixels: list = values.replace(' ', '').split(',')
             trim_values = [cls.round_up(float(x)) for x in pixels if x]
@@ -116,54 +120,126 @@ class ImageOptions(BaseModel):
         values["h"] = values["height"] = height
 
         return values
+    
+    @root_validator
+    def ignore_if_width_or_height_does_not_exist(cls, values):
+        """
+        Set certain options to None if width or height does not exist.
+        """
+        width, height = values.get('width'), values.get('height')
+
+        if not (width or height):
+            for option in ['dpr', 'fit']:
+                values[option] = None
+
+        return values
 
     @staticmethod
     def round_up(value):
         rounded = Decimal(value).quantize(1, rounding=ROUND_HALF_UP)
         return int(rounded)
+    
+    @property
+    def prepared_width(self):
+        if self.dpr:
+            return self.width * self.dpr
+        
+        return self.width
 
+    @property
+    def prepared_height(self):
+        if self.dpr:
+            return self.height * self.dpr
 
-# i = ImageOptions(anim='true', background='black', blur=20, rotate=180, w=90, trim='1.5,2,3,4')
-i = ImageOptions(w=90, dpr=2)
+        return self.height
 
-# import pdb; pdb.set_trace()
+i = ImageOptions(anim='true', background='black', blur=20, rotate=180, w=90, trim='1.5,2,3,4')
+# i = ImageOptions(w=90, dpr=2)
+
 
 @dataclass
 class ImageTransformer:
     config: ImageOptions
     img: Image
+    img_frames: Optional[List[Image]]
 
-    def adjust_options(self):
-        cfg = self.config
-
-        # ensure `width` or `height` exists for certain options
-        if not (cfg.width or cfg.height):
-
-            if cfg.dpr:
-                cfg.dpr = None
-
-            if cfg.fit:
-                cfg.fit = None
-
-        # multiply height and width by dpr
-        if cfg.dpr:
-            for attr in ['width', 'height', 'w', 'h']:
-                orig_dimension = getattr(cfg, attr)
-                setattr(cfg, attr, orig_dimension*cfg.dpr)
+    @property
+    def is_img_animated(self):
+        return getattr(self.img, "is_animated", False)
+    
+    @property
+    def should_freeze_frames(self):
+        return cfg.anim is False and self.is_img_animated
 
     def transform(self):
         """
         Apply all transformation steps to the image.
 
-        1. Multiply width and height by dpr?
         2. If animated and has transform options, save first frame and do transformations on frame
         3. resizing (fit options + trim)
         4. filters (blur, brightness, contrast, sharpen) + rotate
         """
+
         cfg = self.config
-        orig_size = self.img.size  # TODO: do we need this?
+
+        if self.should_freeze_frames:
+            # TODO: store all image frames in self.img_frames. Process transformations on each frame
+            pass
         
-        # Are we working with animated image? If so, check if anim is True
+        # resizing
+        if cfg.prepared_height or cfg.prepared_width:
+            width, height = self.get_dimensions()
 
     def save(self):
         pass
+
+    def get_dimensions(self, width: int = None, height: int = None) -> tuple:
+        """
+        Calculate new dimensions based on the original image's aspect ratio and a width or height.
+        """
+        if not width and not height:
+            return self.img.size
+
+        if width and height:
+            return (width, height)
+        
+        orig_width, orig_height = self.img.size
+
+        # calculate new height
+        if width and not height:
+            height = round_up((orig_height / orig_width) * width)
+            return (width, height)
+        
+        # calculate new width
+        if not width and height:
+            width = round_up((orig_width / orig_height) * height)
+            return (width, height)
+
+    def scale_down(self, width: int, height: int) -> None:
+        """
+        The image is never enlarged.
+        If the image is larger than given width or height, it will be resized, preserving aspect ratio.
+        Otherwise its original size will be kept.
+
+        Scenarios:
+            - if all smaller dimensions -> scaled down image
+            - if all larger dimensions -> original image
+            - if smaller + larger dimension -> scaled down image according to smaller dimension
+        
+        docs: https://pillow.readthedocs.io/en/stable/reference/Image.html#PIL.Image.Image.thumbnail
+        """
+        self.img.thumbnail((width, height))
+    
+    def contain(self, width: int, height: int) -> None:
+        """
+        Image will be resized (shrunk or enlarged) to be as large as possible within the given
+        width or height while preserving the aspect ratio.
+
+        Scenarios:
+            - all smaller dimensions -> scaled down image
+            - all larger dimensions -> scaled up image
+            - smaller + larger dimension -> scaled down image according to smaller dimension
+
+        docs: https://pillow.readthedocs.io/en/stable/reference/ImageOps.html#PIL.ImageOps.contain
+        """
+        self.img = ImageOps.contain(self.img, (width, height))

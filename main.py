@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from decimal import Decimal, ROUND_HALF_UP
 from enum import Enum
 import io
 import logging
@@ -13,30 +14,59 @@ from PIL import Image, ImageColor, ImageOps, ImageFilter, ImageEnhance
 logger = logging.getLogger(__name__)
 
 
+
+def round_up(value):
+    rounded = Decimal(value).quantize(1, rounding=ROUND_HALF_UP)
+    return int(rounded)
+
+
 def get_filename_stem(name: str) -> str:
     return Path(name).stem
 
+
+# def get_new_dimensions(img: Image, width: int = None, height: int = None) -> tuple:
+#     """
+#     Return new dimensions given original image's aspect ratio and a width or height.
+#     """
+#     if not width and not height:
+#         return img.size
+    
+#     if width and height:
+#         return (width, height)
+    
+#     orig_width, orig_height = img.size
+
+#     if width and not height:
+#         width_percent = width / orig_width
+#         height = int(orig_height * width_percent)
+#         return (width, height)
+    
+#     if not width and height:
+#         height_percent = height / orig_height
+#         width = int(orig_width * height_percent)
+#         return (width, height)
 
 def get_new_dimensions(img: Image, width: int = None, height: int = None) -> tuple:
     """
     Return new dimensions given original image's aspect ratio and a width or height.
     """
+
     if not width and not height:
         return img.size
-    
+
     if width and height:
         return (width, height)
     
     orig_width, orig_height = img.size
 
+    # calculate new height
     if width and not height:
-        width_percent = width / orig_width
-        height = int(orig_height * width_percent)
+        height = round_up((orig_height / orig_width) * width)
         return (width, height)
     
+    # calculate new width
     if not width and height:
-        height_percent = height / orig_height
-        width = int(orig_width * height_percent)
+        width = round_up((orig_width / orig_height) * height)
         return (width, height)
 
 
