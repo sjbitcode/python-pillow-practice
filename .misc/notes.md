@@ -214,4 +214,4 @@ why is this returning avif??
 
 - test multiple of the same query params
 - if png has background added, convert to jpg from 
-  - 
+- after chat with Tim - *don't transform animated images!*

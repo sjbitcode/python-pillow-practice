@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 from enum import Enum
 
-from PIL import Image
+from PIL import Image, ImageColor, ImageOps, ImageFilter, ImageEnhance
 from typing import ClassVar, Optional, Union, Literal
 
 from pydantic import (
@@ -54,6 +54,11 @@ class Foo(BaseModel):
     f: confloat(ge=1, le=10) = Field(default=None)
     # c: NonNegativeInt
 
+def round_up(value):
+    rounded = Decimal(value).quantize(1, rounding=ROUND_HALF_UP)
+    return int(rounded)
+
+
 class ImageOptions(BaseModel):
     anim: Optional[bool] = True
     background: Optional[Color] = None
@@ -83,8 +88,8 @@ class ImageOptions(BaseModel):
         Convert list of strings into a `TrimPixels` instance.
 
         Example:
-        "1,2,3,4"          TrimPixels(top=1, right=2, bottom=3, left=4)
-        "1.1, 2.5, 3, 4"   TrimPixels(top=1, right=2, bottom=3, left=4)
+            - "1,2,3,4"          TrimPixels(top=1, right=2, bottom=3, left=4)
+            - "1.1, 2.5, 3, 4"   TrimPixels(top=1, right=2, bottom=3, left=4)
         """
         if isinstance(values, TrimPixels):
             return values
@@ -101,6 +106,7 @@ class ImageOptions(BaseModel):
             bottom=trim_values[2],
             left=trim_values[3]
         )
+
         return trim_obj
 
     @root_validator
@@ -120,7 +126,7 @@ class ImageOptions(BaseModel):
         values["h"] = values["height"] = height
 
         return values
-    
+
     @root_validator
     def ignore_if_width_or_height_does_not_exist(cls, values):
         """
@@ -134,11 +140,6 @@ class ImageOptions(BaseModel):
 
         return values
 
-    @staticmethod
-    def round_up(value):
-        rounded = Decimal(value).quantize(1, rounding=ROUND_HALF_UP)
-        return int(rounded)
-    
     @property
     def prepared_width(self):
         if self.dpr:
@@ -161,36 +162,51 @@ i = ImageOptions(anim='true', background='black', blur=20, rotate=180, w=90, tri
 class ImageTransformer:
     config: ImageOptions
     img: Image
-    img_frames: Optional[List[Image]]
 
     @property
-    def is_img_animated(self):
+    def is_animated(self):
         return getattr(self.img, "is_animated", False)
     
     @property
-    def should_freeze_frames(self):
-        return cfg.anim is False and self.is_img_animated
+    def should_freeze_frame(self):
+        return self.config.anim is False and self.is_animated
 
-    def transform(self):
+    def transform(self) -> None:
         """
         Apply all transformation steps to the image.
 
-        2. If animated and has transform options, save first frame and do transformations on frame
+        2. If animated, check anim to determine whether to freeze first frame
         3. resizing (fit options + trim)
         4. filters (blur, brightness, contrast, sharpen) + rotate
         """
 
-        cfg = self.config
-
-        if self.should_freeze_frames:
-            # TODO: store all image frames in self.img_frames. Process transformations on each frame
+        # TODO: don't apply transformations on animated images
+        if self.should_freeze_frame:
             pass
-        
+
         # resizing
-        if cfg.prepared_height or cfg.prepared_width:
-            width, height = self.get_dimensions()
+        self.apply_resize()
+
+        # filters + rotate
+        self.apply_effects()
 
     def save(self):
+        pass
+
+    def apply_resize(self):
+        """
+        Fit options + trim
+        """
+        if self.config.prepared_height or self.config.prepared_width:
+            width, height = self.get_dimensions()
+        
+        # TODO: call all fit + trim methods here
+
+    def apply_effects(self):
+        """
+        filters (blur, brightness, contrast, sharpen) + rotate
+        """
+        # TODO: call all filter + rotate methods here
         pass
 
     def get_dimensions(self, width: int = None, height: int = None) -> tuple:
@@ -243,3 +259,36 @@ class ImageTransformer:
         docs: https://pillow.readthedocs.io/en/stable/reference/ImageOps.html#PIL.ImageOps.contain
         """
         self.img = ImageOps.contain(self.img, (width, height))
+
+    def cover(self, width: int, height: int, gravity: tuple = CENTER_CROP) -> Image:
+        """
+        Resizes (shrinks or enlarges) to fill the entire area of width and height. If the image has an aspect ratio
+        different from the ratio of width and height, it will be cropped to fit.
+
+        docs: https://pillow.readthedocs.io/en/stable/reference/ImageOps.html#PIL.ImageOps.fit
+        """
+        self.img = ImageOps.fit(self.img, (width, height), centering=gravity)
+
+    def crop(img: Image, width: int, height: int, gravity: Gravity = Gravity.CENTER) -> Image:
+        """
+        Image will be shrunk and cropped to fit within the area specified by width and height.
+        The image will not be enlarged.
+
+        Original dimensions are the maximum possible dimensions.
+
+        Scenarios:
+            - smaller dimensions -> scaled down image
+            - larger dimensions -> original image
+            - smaller + larger dimensions -> cropped image with smaller + original dimension
+        
+        docs: https://pillow.readthedocs.io/en/stable/reference/ImageOps.html#PIL.ImageOps.fit
+        """
+        orig_width, orig_height = img.size
+
+        # Take smallest height and width
+        width, height = min(orig_width, width), min(orig_height, height)
+
+        # Get Pillow centering position from gravity
+        centering = get_centering_from_gravity(img=img, width=width, height=height, gravity=gravity)
+
+        self.img = ImageOps.fit(img, (width, height), centering=centering)
