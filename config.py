@@ -55,8 +55,7 @@ class Foo(BaseModel):
     # c: NonNegativeInt
 
 def round_up(value):
-    rounded = Decimal(value).quantize(1, rounding=ROUND_HALF_UP)
-    return int(rounded)
+    return int(Decimal(value).quantize(1, rounding=ROUND_HALF_UP))
 
 
 class ImageOptions(BaseModel):
