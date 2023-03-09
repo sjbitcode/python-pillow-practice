@@ -1,8 +1,10 @@
 from dataclasses import dataclass
+from enum import Enum
 import io
 import logging
 import re
-from typing import Union, Optional
+from typing import Union, Optional, Literal
+from pathlib import Path
 
 # from pydantic import BaseModel
 # from pydantic.color import Color
@@ -11,32 +13,14 @@ from PIL import Image, ImageColor, ImageOps, ImageFilter, ImageEnhance
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class ImageOptions:
-    anim: Optional[bool] = True
-    background: Optional[str] = None
-    blur: Optional[int] = None
-    brightness: Optional[float] = None
+def get_filename_stem(name: str) -> str:
+    return Path(name).stem
 
-    # contrast: 
-    # dpr: 
-    # fit: 
-    # format: 
-    # gamma: 
-    # gamma: 
-    # gravity: 
-    # metadata: 
-    # quality: 
-    # rotate: 
-    # trim: 
-    # sharpen: 
-    # w: 
-    # width: 
-    # h: 
-    # height: 
-    # url: 
 
 def get_new_dimensions(img: Image, width: int = None, height: int = None) -> tuple:
+    """
+    Return new dimensions given original image's aspect ratio and a width or height.
+    """
     if not width and not height:
         return img.size
     
@@ -57,6 +41,9 @@ def get_new_dimensions(img: Image, width: int = None, height: int = None) -> tup
 
 
 def get_aspect_ratio_factor(width: int, height: int) -> float:
+    """
+    Calculate aspect ratio factor of an image.
+    """
     return round(width / height, 1)
 
 
@@ -73,7 +60,8 @@ def scale_down(img: Image, width: int, height: int) -> Image:
     
     docs: https://pillow.readthedocs.io/en/stable/reference/Image.html#PIL.Image.Image.thumbnail
     """
-    return img.copy().thumbnail((width, height))
+    img.thumbnail((width, height))
+    return img
 
 
 def contain(img: Image, width: int, height: int) -> Image:
@@ -130,20 +118,19 @@ BOTTOM_LEFT = (1, 0)
 TOP_RIGHT = (0, 1)
 BOTTOM_RIGHT = (1, 1)
 
-WIDE_IMAGE_GRAVITY_OPTIONS = {
-    'top': TOP_LEFT,
-    'bottom': BOTTOM_RIGHT,
-    'left': CENTER_CROP,
-    'right': CENTER_CROP
-}
+# WIDE_IMAGE_GRAVITY_OPTIONS = {
+#     'top': TOP_LEFT,
+#     'bottom': BOTTOM_RIGHT,
+#     'left': CENTER_CROP,
+#     'right': CENTER_CROP
+# }
 
-TALL_IMAGE_GRAVITY_OPTIONS = {
-    'top': CENTER_CROP,
-    'bottom': CENTER_CROP,
-    'left': TOP_LEFT,
-    'right': BOTTOM_LEFT
-}
-
+# TALL_IMAGE_GRAVITY_OPTIONS = {
+#     'top': CENTER_CROP,
+#     'bottom': CENTER_CROP,
+#     'left': TOP_LEFT,
+#     'right': BOTTOM_LEFT
+# }
 
 def cover(img: Image, width: int, height: int, gravity: tuple = CENTER_CROP) -> Image:
     """
@@ -155,7 +142,54 @@ def cover(img: Image, width: int, height: int, gravity: tuple = CENTER_CROP) -> 
     return ImageOps.fit(img, (width, height), centering=gravity)
 
 
-def crop(img: Image, width: int, height: int, gravity: tuple = CENTER_CROP) -> Image:
+class Gravity(Enum):
+    CENTER = "center"
+    TOP = "top"
+    BOTTOM = "bottom"
+    LEFT = "left"
+    RIGHT = "right"
+
+CENTER_CROP = (0.5, 0.5)
+TOP_LEFT = (0, 0)
+BOTTOM_LEFT = (1, 0)
+TOP_RIGHT = (0, 1)
+BOTTOM_RIGHT = (1, 1)
+
+# cropping height
+WIDE_IMAGE_GRAVITY_OPTIONS = {
+    Gravity.TOP: TOP_LEFT,
+    Gravity.BOTTOM: BOTTOM_RIGHT,
+    Gravity.LEFT: CENTER_CROP,
+    Gravity.RIGHT: CENTER_CROP
+}
+
+# cropping width
+TALL_IMAGE_GRAVITY_OPTIONS = {
+    Gravity.TOP: CENTER_CROP,
+    Gravity.BOTTOM: CENTER_CROP,
+    Gravity.LEFT: TOP_LEFT,
+    Gravity.RIGHT: BOTTOM_LEFT
+}
+
+def get_centering_from_gravity(img: Image, width: int, height: int, gravity: Gravity) -> tuple:
+    """
+    Return the Pillow centering tuple based on gravity option
+    and aspect ratio of new image.  
+    """
+
+    orig_aspect_ratio = get_aspect_ratio_factor(width=img.size[0], height=img.size[1])
+    new_aspect_ratio = get_aspect_ratio_factor(width=width, height=height)
+
+    if gravity is Gravity.CENTER:
+        return CENTER_CROP
+
+    if new_aspect_ratio > orig_aspect_ratio:
+        return WIDE_IMAGE_GRAVITY_OPTIONS[gravity]
+    else:
+        return TALL_IMAGE_GRAVITY_OPTIONS[gravity]
+
+
+def crop(img: Image, width: int, height: int, gravity: Gravity = Gravity.CENTER) -> Image:
     """
     Image will be shrunk and cropped to fit within the area specified by width and height.
     The image will not be enlarged.
@@ -174,20 +208,85 @@ def crop(img: Image, width: int, height: int, gravity: tuple = CENTER_CROP) -> I
     # Take smallest height and width
     width, height = min(orig_width, width), min(orig_height, height)
 
-    orig_aspect_ratio = get_aspect_ratio_factor(width=orig_width, height=orig_height)
-    crop_aspect_ratio = get_aspect_ratio_factor(width=width, height=height)
+    # Get Pillow centering position from gravity
+    centering = get_centering_from_gravity(img=img, width=width, height=height, gravity=gravity)
+
+    # orig_aspect_ratio = get_aspect_ratio_factor(width=orig_width, height=orig_height)
+    # crop_aspect_ratio = get_aspect_ratio_factor(width=width, height=height)
+
+    # # figure out how to handle gravity options for differently sized images
+    # if gravity is not CENTER_CROP:
+
+    #     # need to fix this! decide on if gravity should be string of "top, left, bottom, etc" or Pillow tuple options
+    #     if crop_aspect_ratio > orig_aspect_ratio:
+    #         gravity = WIDE_IMAGE_GRAVITY_OPTIONS[gravity]
+    #     else:
+    #         gravity = TALL_IMAGE_GRAVITY_OPTIONS[gravity]
+
+    return ImageOps.fit(img, (width, height), centering=centering)
 
 
-    # figure out how to handle gravity options for differently sized images
-    if gravity is not CENTER_CROP:
+def rotate(img: Image, degrees: int) -> Image:
+    """
+    Return a rotated version of the image.
+    Valid rotation degrees are 90, 180, or 270.
 
-        # need to fix this! decide on if gravity should be string of "top, left, bottom, etc" or Pillow tuple options
-        if crop_aspect_ratio > orig_aspect_ratio:
-            gravity = WIDE_IMAGE_GRAVITY_OPTIONS[gravity]
-        else:
-            gravity = TALL_IMAGE_GRAVITY_OPTIONS[gravity]
+    docs: https://pillow.readthedocs.io/en/stable/reference/Image.html#PIL.Image.Image.rotate
+    """
+    return img.rotate(angle=degrees, expand=True)
 
-    return ImageOps.fit(img, (width, height), centering=gravity)
+
+@dataclass
+class TrimPixels:
+    top: int = 0
+    bottom: int = 0
+    left: int = 0
+    right: int = 0
+
+
+def trim(img: Image, trim: TrimPixels) -> Image:
+    """
+    Cut off pixels from an image.
+    TODO: Perform validation to make sure we're pixels don't exceed image dimensions.
+    """
+    width, height = img.size
+    dimensions = (trim.left, trim.top, width-trim.right, height-trim.bottom)
+
+    return img.crop(box=dimensions)
+
+
+def strip_exif_data(img: Image) -> None:
+    """
+    Removes image EXIF metadata if it exists.
+    """
+    if 'exif' in img.info:
+        del img.info['exif']
+
+
+def sharpen(img: Image, sharpen_amount: Union[float, int]) -> Image:
+    """
+    Adjust image sharpness.
+
+    CloudFlare
+        - 0 (no sharpening, default)
+        - 10 (maximum)
+        - 1 is a recommended value for downscaled images
+    will error if value not between 0 - 10 inclusive
+
+    Pillow
+        - factor of 0.0 gives a blurred image
+        - a factor of 1.0 gives the original image
+        - a factor of 2.0 gives a sharpened image
+        - has no cap, but we can enforce a cap at 10?
+
+    Proposed:
+        - 0 (no sharpening, default)
+        - 10 (maximum)
+
+    docs: https://pillow.readthedocs.io/en/stable/reference/ImageEnhance.html#PIL.ImageEnhance.Sharpness
+    """
+    filter = ImageEnhance.Sharpness(img)
+    return filter.enhance(sharpen_amount)
 
 
 def save_image(img: Image, webp: bool = False, quality: int = 75) -> io.BytesIO:
@@ -196,6 +295,7 @@ def save_image(img: Image, webp: bool = False, quality: int = 75) -> io.BytesIO:
     setting the following options:
         - correct output type (webp, avif, or original image)
         - quality (75 is Pillow's default)
+        - optimize for non-webp formats (because optimize doesn't benefit webp)
     """
     pass
 
@@ -216,13 +316,17 @@ def freeze_animated_image(img: Image) -> Optional[Image.Image]:
         return img
 
 
-def blur(img: Image, blur_radius: int) -> Image:
+def blur(img: Image, blur_radius: Union[float, int]) -> Image:
     """
     Applies Gaussian blur to image.
 
     Looks like blur_radius has no fixed limit according to Pillow docs,
     (ex. blur radius 300 is blurrier than blur radius 250)
     so we can just cap it at 250, similar to CloudFlare.
+
+    CloudFlare range: 1 - 250 inclusive. Anything below 1 is ignored.
+
+    Pillow < 1 values do blur.
 
     docs: https://pillow.readthedocs.io/en/stable/reference/ImageFilter.html#PIL.ImageFilter.GaussianBlur
     """
@@ -235,12 +339,14 @@ def brightness(img: Image, brighten_amount: Union[float, int]) -> Image:
 
     Amount of 0 gives you a black image
     Amount of 1.0 gives you original image
-    No cap
+    No cap.
 
-    CloudFlare doesn't have a cap on brightness.
+    CloudFlare range: 0 - 255 inclusive.
 
     docs: https://pillow.readthedocs.io/en/stable/reference/ImageEnhance.html#PIL.ImageEnhance.Brightness
     """
+    # Reset brightness if its 0 to avoid black image.
+    brighten_amount = 1 if brighten_amount == 0 else brighten_amount
     filter = ImageEnhance.Brightness(img)
     return filter.enhance(brighten_amount)
 
@@ -249,15 +355,17 @@ def contrast(img: Image, contrast_amount: Union[float, int]) -> Image:
     """
     Applies contrast to image.
 
-    Amount of 0 gives you grey image.
+    Amount of 0 gives you a greyed out image.
     Amount of 1.0 gives you original image
-    No cap
+    No cap.
 
-    CloudFlare doesn't have a cap on brightness.
+    CloudFlare range: 0 - 255 inclusive.
 
     docs: https://pillow.readthedocs.io/en/stable/reference/ImageEnhance.html#PIL.ImageEnhance.Contrast
     """
-    filter = ImageEnhance.Enhance(img)
+    # Reset contrast if its 0 to avoid 
+    contrast_amount = 1 if contrast_amount == 0 else contrast_amount
+    filter = ImageEnhance.Contrast(img)
     return filter.enhance(contrast_amount)
 
 
@@ -304,11 +412,3 @@ def pad(img: Image, width: int, height: int, color: Optional[Union[str, tuple]] 
         color = get_rgb_from_hex(color)
 
     return ImageOps.pad(img, (width, height), color=color)
-
-
-def gravity():
-    pass
-
-
-def trim():
-    pass
