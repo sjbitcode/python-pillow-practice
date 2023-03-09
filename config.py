@@ -95,7 +95,7 @@ class ImageOptions(BaseModel):
 
         try:
             pixels: list = values.replace(' ', '').split(',')
-            trim_values = [cls.round_up(float(x)) for x in pixels if x]
+            trim_values = [round_up(float(x)) for x in pixels if x]
         except:
             raise ValueError('must be list of integer or float values')
 
@@ -117,11 +117,11 @@ class ImageOptions(BaseModel):
         Round up width and height values.
         """
         width = values.get("width") or values.get("w")
-        width = cls.round_up(width) if width else None
+        width = round_up(width) if width else None
         values["w"] = values["width"] = width
 
         height = values.get("height") or values.get("h")
-        height = cls.round_up(height) if height else None
+        height = round_up(height) if height else None
         values["h"] = values["height"] = height
 
         return values
@@ -165,7 +165,7 @@ class ImageTransformer:
     @property
     def is_animated(self):
         return getattr(self.img, "is_animated", False)
-    
+
     @property
     def should_freeze_frame(self):
         return self.config.anim is False and self.is_animated
@@ -259,7 +259,7 @@ class ImageTransformer:
         """
         self.img = ImageOps.contain(self.img, (width, height))
 
-    def cover(self, width: int, height: int, gravity: tuple = CENTER_CROP) -> Image:
+    def cover(self, width: int, height: int, gravity: tuple = CENTER_CROP) -> None:
         """
         Resizes (shrinks or enlarges) to fill the entire area of width and height. If the image has an aspect ratio
         different from the ratio of width and height, it will be cropped to fit.
@@ -268,7 +268,7 @@ class ImageTransformer:
         """
         self.img = ImageOps.fit(self.img, (width, height), centering=gravity)
 
-    def crop(img: Image, width: int, height: int, gravity: Gravity = Gravity.CENTER) -> Image:
+    def crop(self, img: Image, width: int, height: int, gravity: Gravity = Gravity.CENTER) -> None:
         """
         Image will be shrunk and cropped to fit within the area specified by width and height.
         The image will not be enlarged.
