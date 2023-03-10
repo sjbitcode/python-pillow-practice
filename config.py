@@ -36,6 +36,29 @@ class FitEnum(str, Enum):
     PAD = "pad"
 
 
+CENTER_CROP = (0.5, 0.5)
+TOP_LEFT = (0, 0)
+BOTTOM_LEFT = (1, 0)
+TOP_RIGHT = (0, 1)
+BOTTOM_RIGHT = (1, 1)
+
+# cropping height
+WIDE_IMAGE_GRAVITY_OPTIONS = {
+    GravityEnum.TOP: TOP_LEFT,
+    GravityEnum.BOTTOM: BOTTOM_RIGHT,
+    GravityEnum.LEFT: CENTER_CROP,
+    GravityEnum.RIGHT: CENTER_CROP
+}
+
+# cropping width
+TALL_IMAGE_GRAVITY_OPTIONS = {
+    GravityEnum.TOP: CENTER_CROP,
+    GravityEnum.BOTTOM: CENTER_CROP,
+    GravityEnum.LEFT: TOP_LEFT,
+    GravityEnum.RIGHT: BOTTOM_LEFT
+}
+
+
 class TrimPixels(BaseModel):  # round floats?
     top: NonNegativeInt
     right: NonNegativeInt
@@ -80,6 +103,7 @@ class ImageOptions(BaseModel):
     rotate: Optional[conint(multiple_of=90)]
     sharpen: Optional[confloat(ge=0, le=10)]
     trim: Optional[TrimPixels]
+    webp: Optional[bool] = False
 
     @validator('trim', pre=True)
     def save_trim_to_model(cls, values):
@@ -143,7 +167,7 @@ class ImageOptions(BaseModel):
     def prepared_width(self):
         if self.dpr:
             return self.width * self.dpr
-        
+
         return self.width
 
     @property
@@ -169,46 +193,92 @@ class ImageTransformer:
     @property
     def should_freeze_frame(self):
         return self.config.anim is False and self.is_animated
+    
+    @property
+    def save_format(self):
+        if self.config.webp:
+            return 'webp'
+        return img.format
 
     def transform(self) -> None:
         """
         Apply all transformation steps to the image.
 
-        2. If animated, check anim to determine whether to freeze first frame
-        3. resizing (fit options + trim)
-        4. filters (blur, brightness, contrast, sharpen) + rotate
+        1. If animated, check anim to determine whether to freeze first frame
+        2. resizing (fit options + trim)
+        3. filters (blur, brightness, contrast, sharpen) + rotate
         """
 
-        # TODO: don't apply transformations on animated images
         if self.should_freeze_frame:
-            pass
+            self.freeze_animated_image()
+        else:
+            self.apply_resize()
+            self.apply_effects()
 
-        # resizing
-        self.apply_resize()
+    def save(self) -> io.BytesIO:
+        """
+        1. Strip metadata if metadata
+        2. 
+        """
+        save_kwargs = {
+            'quality': self.config.quality,
+            'format': self.save_format,
+            'optimize': True
+        }
+        
+        if self.config.metadata:
+            self.strip_exif_data()
+        else:
+            save_kwargs['exif'] = self.img.getexif()
 
-        # filters + rotate
-        self.apply_effects()
-
-    def save(self):
-        pass
+        buffer = io.BytesIO()
+        self.img.save(buffer, **save_kwargs)
+        return buffer
 
     def apply_resize(self):
         """
         Fit options + trim
         """
-        if self.config.prepared_height or self.config.prepared_width:
-            width, height = self.get_dimensions()
+        if not (self.config.fit or self.config.trim):
+            return
+
+        fit_methods = {
+            FitEnum.COVER: self.cover,
+            FitEnum.CONTAIN: self.contain,
+            FitEnum.SCALE_DOWN: self.scale_down,
+            FitEnum.CROP: self.crop,
+            FitEnum.PAD: self.pad
+        }
+
+        width, height = self._get_dimensions(
+            width=self.config.prepared_width,
+            height=self.config.prepared_height
+        )
+
+        fit_option = self.config.fit
+
+        if fit_option in [FitEnum.SCALE_DOWN, FitEnum.CONTAIN]:
+            fit_methods[fit_option](width=width, height=height)
         
-        # TODO: call all fit + trim methods here
+        if fit_option in [FitEnum.COVER, FitEnum.CROP]:
+            fit_methods[fit_option](width=width, height=height, gravity=self.config.gravity)
+        
+        if fit_option is FitEnum.PAD:
+            fit_methods[fit_option](width=width, height=height, color=self.config.background)
+
+        if self.config.trim:
+            self.trim()
 
     def apply_effects(self):
         """
         filters (blur, brightness, contrast, sharpen) + rotate
         """
-        # TODO: call all filter + rotate methods here
-        pass
+        for effect in ['blur', 'brightness', 'contrast', 'sharpen', 'rotate']:
+            if getattr(self.config, effect, None):
+                effect_func = getattr(self, effect)
+                effect_func()
 
-    def get_dimensions(self, width: int = None, height: int = None) -> tuple:
+    def _get_dimensions(self, width: int = None, height: int = None) -> tuple:
         """
         Calculate new dimensions based on the original image's aspect ratio and a width or height.
         """
@@ -259,16 +329,19 @@ class ImageTransformer:
         """
         self.img = ImageOps.contain(self.img, (width, height))
 
-    def cover(self, width: int, height: int, gravity: tuple = CENTER_CROP) -> None:
+    def cover(self, width: int, height: int, gravity: GravityEnum = GravityEnum.CENTER) -> None:
         """
         Resizes (shrinks or enlarges) to fill the entire area of width and height. If the image has an aspect ratio
         different from the ratio of width and height, it will be cropped to fit.
 
         docs: https://pillow.readthedocs.io/en/stable/reference/ImageOps.html#PIL.ImageOps.fit
         """
+        # Get Pillow centering position from gravity
+        centering = self._get_centering_from_gravity(width=width, height=height, gravity=gravity)
+
         self.img = ImageOps.fit(self.img, (width, height), centering=gravity)
 
-    def crop(self, img: Image, width: int, height: int, gravity: Gravity = Gravity.CENTER) -> None:
+    def crop(self, width: int, height: int, gravity: GravityEnum = GravityEnum.CENTER) -> None:
         """
         Image will be shrunk and cropped to fit within the area specified by width and height.
         The image will not be enlarged.
@@ -288,6 +361,152 @@ class ImageTransformer:
         width, height = min(orig_width, width), min(orig_height, height)
 
         # Get Pillow centering position from gravity
-        centering = get_centering_from_gravity(img=img, width=width, height=height, gravity=gravity)
+        centering = self._get_centering_from_gravity(width=width, height=height, gravity=gravity)
 
-        self.img = ImageOps.fit(img, (width, height), centering=centering)
+        self.img = ImageOps.fit(self.img, (width, height), centering=centering)
+
+    def pad(self, width: int, height: int, color: Optional[Union[str, tuple]] = (0, 0, 0)) -> Image:
+        """
+        Takes in background color!
+
+        docs: https://pillow.readthedocs.io/en/stable/reference/ImageOps.html#PIL.ImageOps.pad
+        """
+
+        if isinstance(color, str) and is_valid_hex(color):
+            color = get_rgb_from_hex(color)
+
+        self.img = ImageOps.pad(self.img, (width, height), color=color)
+
+    def trim(self) -> None:
+        """
+        Cut off pixels from an image.
+        TODO: Perform validation to make sure we're pixels don't exceed image dimensions.
+        """
+        width, height = self.img.size
+        trim = self.config.trim
+
+        self.img = self.img.crop(box=(trim.left, trim.top, width-trim.right, height-trim.bottom))
+    
+    def _get_centering_from_gravity(self, width: int, height: int, gravity: GravityEnum) -> tuple:
+        """
+        Return the Pillow centering tuple based on gravity option
+        and aspect ratio of new image.
+        """
+        orig_aspect_ratio = self._get_aspect_ratio_factor(width=img.size[0], height=img.size[1])
+        new_aspect_ratio = self._get_aspect_ratio_factor(width=width, height=height)
+
+        if gravity is Gravity.CENTER:
+            return CENTER_CROP
+
+        if new_aspect_ratio > orig_aspect_ratio:
+            return WIDE_IMAGE_GRAVITY_OPTIONS[gravity]
+        else:
+            return TALL_IMAGE_GRAVITY_OPTIONS[gravity]
+
+    @staticmethod
+    def _get_aspect_ratio_factor(width: int, height: int) -> float:
+        """
+        Calculate aspect ratio factor of an image.
+        """
+        return round(width / height, 1)
+
+    def blur(self) -> None:
+        """
+        Applies Gaussian blur to image.
+
+        Looks like blur_radius has no fixed limit according to Pillow docs,
+        (ex. blur radius 300 is blurrier than blur radius 250)
+        so we can just cap it at 250, similar to CloudFlare.
+
+        CloudFlare range: 1 - 250 inclusive. Anything below 1 is ignored.
+
+        Pillow < 1 values do blur.
+
+        docs: https://pillow.readthedocs.io/en/stable/reference/ImageFilter.html#PIL.ImageFilter.GaussianBlur
+        """
+        self.img = img.filter(ImageFilter.GaussianBlur(self.config.blur))
+
+    def brightness(self) -> None:
+        """
+        Applies brightness to image.
+
+        Amount of 0 gives you a black image
+        Amount of 1.0 gives you original image
+        No cap.
+
+        CloudFlare range: 0 - 255 inclusive.
+
+        docs: https://pillow.readthedocs.io/en/stable/reference/ImageEnhance.html#PIL.ImageEnhance.Brightness
+        """
+        # Reset brightness if its 0 to avoid black image.
+        brighten_amount = 1 if self.config.brightness == 0 else self.config.brightness
+        filter = ImageEnhance.Brightness(self.img)
+
+        self.img = filter.enhance(brighten_amount)
+    
+    def contrast(self) -> None:
+        """
+        Applies contrast to image.
+
+        Amount of 0 gives you a greyed out image.
+        Amount of 1.0 gives you original image
+        No cap.
+
+        CloudFlare range: 0 - 255 inclusive.
+
+        docs: https://pillow.readthedocs.io/en/stable/reference/ImageEnhance.html#PIL.ImageEnhance.Contrast
+        """
+        # Reset contrast if its 0 to avoid 
+        contrast_amount = 1 if self.config.contrast == 0 else self.config.contrast
+        filter = ImageEnhance.Contrast(self.img)
+        
+        self.img = filter.enhance(contrast_amount)
+
+    def sharpen(self) -> None:
+        """
+        Adjust image sharpness.
+
+        CloudFlare
+            - 0 (no sharpening, default)
+            - 10 (maximum)
+            - 1 is a recommended value for downscaled images
+        will error if value not between 0 - 10 inclusive
+
+        Pillow
+            - factor of 0.0 gives a blurred image
+            - a factor of 1.0 gives the original image
+            - a factor of 2.0 gives a sharpened image
+            - has no cap, but we can enforce a cap at 10?
+
+        Proposed:
+            - 0 (no sharpening, default)
+            - 10 (maximum)
+
+        docs: https://pillow.readthedocs.io/en/stable/reference/ImageEnhance.html#PIL.ImageEnhance.Sharpness
+        """
+        filter = ImageEnhance.Sharpness(self.img)
+
+        self.img = filter.enhance(self.config.sharpen)
+
+    def rotate(self) -> None:
+        """
+        Return a rotated version of the image.
+        Valid rotation degrees are 90, 180, or 270.
+
+        docs: https://pillow.readthedocs.io/en/stable/reference/Image.html#PIL.Image.Image.rotate
+        """
+        self.img = self.img.rotate(angle=self.config.rotate, expand=True)
+
+    def freeze_animated_image(self) -> None:
+        """
+        Freeze the first frame of an animated image
+        """
+        if self.is_animated:
+            self.img.seek(0)
+
+    def strip_exif_data(self) -> None:
+        """
+        Removes image EXIF metadata if it exists.
+        """
+        if 'exif' in self.img.info:
+            del self.img.info['exif']
