@@ -24,6 +24,10 @@ def get_filename_stem(name: str) -> str:
     return Path(name).stem
 
 
+def get_filename_extension(name: str) -> str:
+    return Path(name).suffix
+
+
 # def get_new_dimensions(img: Image, width: int = None, height: int = None) -> tuple:
 #     """
 #     Return new dimensions given original image's aspect ratio and a width or height.

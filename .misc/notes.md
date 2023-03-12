@@ -132,7 +132,8 @@ AWS Lambda has a 6 MB invocation payload request and response limit ([reference]
     - https://billboard.fool.com/bigip/us_redirects/?search=foolcdn
     - redirects to https://g.foolcdn.com/art/fool15/bg/fool-logo.png
     - when `Accept` header doesn't have `img/webp` it will serve original (not default to avif because it is not processed by image worker)
-    - 
+- resize gifs
+  - https://gist.github.com/skywodd/8b68bd9c7af048afcedcea3fb1807966
 
 ## Thoughts
 - cache webp/avif versions?

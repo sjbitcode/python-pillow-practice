@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 from enum import Enum
+import io
 
 from PIL import Image, ImageColor, ImageOps, ImageFilter, ImageEnhance
 from typing import ClassVar, Optional, Union, Literal
@@ -185,6 +186,7 @@ i = ImageOptions(anim='true', background='black', blur=20, rotate=180, w=90, tri
 class ImageTransformer:
     config: ImageOptions
     img: Image
+    # img_name: Optional[str]  # if we read it from s3 we might not have name
 
     @property
     def is_animated(self):
@@ -193,12 +195,14 @@ class ImageTransformer:
     @property
     def should_freeze_frame(self):
         return self.config.anim is False and self.is_animated
-    
+
     @property
     def save_format(self):
         if self.config.webp:
             return 'webp'
-        return img.format
+
+        if not self.img.filename:
+            return 
 
     def transform(self) -> None:
         """
@@ -239,32 +243,22 @@ class ImageTransformer:
         """
         Fit options + trim
         """
-        if not (self.config.fit or self.config.trim):
-            return
+        if fit_option := self.config.fit:
+            fit_func = getattr(self, self.config.fit.value)
 
-        fit_methods = {
-            FitEnum.COVER: self.cover,
-            FitEnum.CONTAIN: self.contain,
-            FitEnum.SCALE_DOWN: self.scale_down,
-            FitEnum.CROP: self.crop,
-            FitEnum.PAD: self.pad
-        }
+            width, height = self._get_dimensions(
+                width=self.config.prepared_width,
+                height=self.config.prepared_height
+            )
 
-        width, height = self._get_dimensions(
-            width=self.config.prepared_width,
-            height=self.config.prepared_height
-        )
-
-        fit_option = self.config.fit
-
-        if fit_option in [FitEnum.SCALE_DOWN, FitEnum.CONTAIN]:
-            fit_methods[fit_option](width=width, height=height)
-        
-        if fit_option in [FitEnum.COVER, FitEnum.CROP]:
-            fit_methods[fit_option](width=width, height=height, gravity=self.config.gravity)
-        
-        if fit_option is FitEnum.PAD:
-            fit_methods[fit_option](width=width, height=height, color=self.config.background)
+            if fit_option in [FitEnum.SCALE_DOWN, FitEnum.CONTAIN]:
+                fit_func(width=width, height=height)
+            
+            if fit_option in [FitEnum.COVER, FitEnum.CROP]:
+                fit_func(width=width, height=height, gravity=self.config.gravity)
+            
+            if fit_option is FitEnum.PAD:
+                fit_func(width=width, height=height, color=self.config.background)
 
         if self.config.trim:
             self.trim()
@@ -273,6 +267,9 @@ class ImageTransformer:
         """
         filters (blur, brightness, contrast, sharpen) + rotate
         """
+        if self.config.background:
+            self.fill_background_color()
+
         for effect in ['blur', 'brightness', 'contrast', 'sharpen', 'rotate']:
             if getattr(self.config, effect, None):
                 effect_func = getattr(self, effect)
@@ -424,7 +421,7 @@ class ImageTransformer:
 
         docs: https://pillow.readthedocs.io/en/stable/reference/ImageFilter.html#PIL.ImageFilter.GaussianBlur
         """
-        self.img = img.filter(ImageFilter.GaussianBlur(self.config.blur))
+        self.img = self.img.filter(ImageFilter.GaussianBlur(self.config.blur))
 
     def brightness(self) -> None:
         """
@@ -510,3 +507,16 @@ class ImageTransformer:
         """
         if 'exif' in self.img.info:
             del self.img.info['exif']
+
+    def fill_background_color(self) -> None:
+        """
+        Fill transparent images with a background color.
+        """
+        if self.img.mode in ("RGBA", "LA"):
+            background = Image.new(
+                self.img.mode[:-1],
+                self.img.size,
+                self.config.background.as_rgb_tuple()
+            )
+            background.paste(self.img, mask=self.img)
+            self.img = background
