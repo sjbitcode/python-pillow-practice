@@ -21,7 +21,7 @@ from pydantic import (
 )
 from pydantic.color import Color
 
-from main import get_filename_extension, get_filename_stem
+from utils import get_filename_extension, get_filename_stem
 
 
 class GravityEnum(str, Enum):

@@ -1,4 +1,4 @@
-from main import *
+from utils import *
 
 """
 - https://m.foolcdn.com/media/affiliates/original_images/woman_with_phone_and_laptop_EF0nQi5.jpg
