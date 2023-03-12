@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 from enum import Enum
+from functools import cached_property
 import io
 
 from PIL import Image, ImageColor, ImageOps, ImageFilter, ImageEnhance
@@ -19,6 +20,8 @@ from pydantic import (
     PrivateAttr
 )
 from pydantic.color import Color
+
+from main import get_filename_extension, get_filename_stem
 
 
 class GravityEnum(str, Enum):
@@ -104,7 +107,6 @@ class ImageOptions(BaseModel):
     rotate: Optional[conint(multiple_of=90)]
     sharpen: Optional[confloat(ge=0, le=10)]
     trim: Optional[TrimPixels]
-    webp: Optional[bool] = False
 
     @validator('trim', pre=True)
     def save_trim_to_model(cls, values):
@@ -186,7 +188,11 @@ i = ImageOptions(anim='true', background='black', blur=20, rotate=180, w=90, tri
 class ImageTransformer:
     config: ImageOptions
     img: Image
-    # img_name: Optional[str]  # if we read it from s3 we might not have name
+    transformed_filename: str  # normalized image uri
+
+    @cached_property
+    def valid_extensions(self):
+        return Image.registered_extensions()
 
     @property
     def is_animated(self):
@@ -196,13 +202,11 @@ class ImageTransformer:
     def should_freeze_frame(self):
         return self.config.anim is False and self.is_animated
 
-    @property
-    def save_format(self):
-        if self.config.webp:
-            return 'webp'
+    def get_save_format(self):
+        ext = get_filename_extension(self.transformed_filename)
+        assert ext in self.valid_extensions, "Not a valid image extension"
 
-        if not self.img.filename:
-            return 
+        return self.valid_extensions[ext]
 
     def transform(self) -> None:
         """
@@ -226,7 +230,7 @@ class ImageTransformer:
         """
         save_kwargs = {
             'quality': self.config.quality,
-            'format': self.save_format,
+            'format': self.get_save_format(),
             'optimize': True
         }
         
@@ -237,6 +241,7 @@ class ImageTransformer:
 
         buffer = io.BytesIO()
         self.img.save(buffer, **save_kwargs)
+        buffer.seek(0)
         return buffer
 
     def apply_resize(self):
@@ -520,3 +525,15 @@ class ImageTransformer:
             )
             background.paste(self.img, mask=self.img)
             self.img = background
+
+
+"""
+i = ImageOptions(width=500)
+it = ImageTransformer(config=i, img=Image.open('img/woman_with_phone_and_laptop_EF0nQi5.webp'), transformed_filename='woman_with_phone.png')
+it.transform()
+buffer = it.save()
+
+# Read in Image
+foo = Image.open(buffer)
+foo.show()
+"""
