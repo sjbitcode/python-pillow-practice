@@ -1,4 +1,7 @@
 venv
 .DS_Store
 img/
+img2/
 transformed/
+transformed2/
+pycache/

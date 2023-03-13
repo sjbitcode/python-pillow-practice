@@ -64,10 +64,13 @@ TALL_IMAGE_GRAVITY_OPTIONS = {
 
 
 class TrimPixels(BaseModel):  # round floats?
-    top: NonNegativeInt
-    right: NonNegativeInt
-    bottom: NonNegativeInt
-    left: NonNegativeInt
+    top: NonNegativeInt = Field(default=0)
+    right: NonNegativeInt = Field(default=0)
+    bottom: NonNegativeInt = Field(default=0)
+    left: NonNegativeInt = Field(default=0)
+
+    def __bool__(self):
+        return any(self.dict().values())
 
 # fit: Optional[Literal["scale_down", "contain", "cover", "crop", "pad"]] = "scale_down"
 # gravity=Optional[Literal["center", "top", "bottom", "left", "right"]] = "center"
@@ -106,9 +109,10 @@ class ImageOptions(BaseModel):
     quality: conint(ge=0, le=100) = Field(default=75)  # has some PNG caveat with PNG8 color palette  # should we stick with 85 - CloudFlare's defaults?
     rotate: Optional[conint(multiple_of=90)]
     sharpen: Optional[confloat(ge=0, le=10)]
-    trim: Optional[TrimPixels]
+    # trim: Optional[TrimPixels]
+    trim: Optional[str] = '0,0,0,0'
 
-    @validator('trim', pre=True)
+    @validator('trim')
     def save_trim_to_model(cls, values):
         """
         Convert list of strings into a `TrimPixels` instance.
@@ -117,9 +121,9 @@ class ImageOptions(BaseModel):
             - "1,2,3,4"          TrimPixels(top=1, right=2, bottom=3, left=4)
             - "1.1, 2.5, 3, 4"   TrimPixels(top=1, right=2, bottom=3, left=4)
         """
-        if isinstance(values, TrimPixels):
-            return values
-
+        # # for FastAPI to not continue running validator when no field passed
+        # if values is None:
+        #     return None
         try:
             pixels: list = values.replace(' ', '').split(',')
             trim_values = [round_up(float(x)) for x in pixels if x]
@@ -223,7 +227,7 @@ class ImageTransformer:
             self.apply_resize()
             self.apply_effects()
 
-    def save(self) -> io.BytesIO:
+    def get_save_options(self) -> io.BytesIO:
         """
         1. Strip metadata if metadata
         2. 
@@ -238,9 +242,19 @@ class ImageTransformer:
             self.strip_exif_data()
         else:
             save_kwargs['exif'] = self.img.getexif()
+        
+        return save_kwargs
 
+    def save_to_file(self):
+        save_options = self.get_save_options()
+        self.img.save(self.transformed_filename, **save_options)
+
+    def save_to_buffer(self):
+        save_options = self.get_save_options()
         buffer = io.BytesIO()
-        self.img.save(buffer, **save_kwargs)
+        
+        self.img.save(buffer, **save_options)
+        
         buffer.seek(0)
         return buffer
 
