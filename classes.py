@@ -1,3 +1,6 @@
+from dataclasses import dataclass, Field
+from typing import Optional
+
 from attr import define
 from pydantic import BaseModel
 
@@ -37,3 +40,14 @@ class PydanticPrimitives2(BaseModel):
     c: Optional[int]
     d: Optional[float]
     e: bool
+
+
+class Foo(BaseModel):
+    a: Optional[str]
+    b: Optional[int] = Field(1, ge=1, le=10)
+    c: int = Field(1, ge=1, le=10)
+
+
+@dataclass
+class Bar:
+    a: Optional[str]
