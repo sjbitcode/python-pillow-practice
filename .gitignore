@@ -4,4 +4,4 @@ img/
 img2/
 transformed/
 transformed2/
-pycache/
+__pycache__/

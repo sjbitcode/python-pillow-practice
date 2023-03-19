@@ -1,10 +1,10 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal, ROUND_HALF_UP
 from enum import Enum
 from functools import cached_property
 import io
 
-from PIL import Image, ImageColor, ImageOps, ImageFilter, ImageEnhance
+from PIL import Image, ImageColor, ImageOps, ImageFilter, ImageEnhance, GifImagePlugin
 from typing import ClassVar, Optional, Union, Literal
 
 from pydantic import (
@@ -22,6 +22,10 @@ from pydantic import (
 from pydantic.color import Color
 
 from utils import get_filename_extension, get_filename_stem
+
+
+# Required in order to save gifs to webp with transparency correctly!
+GifImagePlugin.LOADING_STRATEGY = GifImagePlugin.LoadingStrategy.RGB_ALWAYS
 
 
 class GravityEnum(str, Enum):
@@ -90,6 +94,7 @@ def round_up(value):
 
 class ImageOptions(BaseModel):
     anim: Optional[bool] = True
+    # enable_webp: Optional[bool] = True
     background: Optional[Color] = None
 
     blur: Optional[confloat(ge=0, le=255)]
@@ -106,13 +111,13 @@ class ImageOptions(BaseModel):
 
     dpr: Optional[conint(ge=1, le=3)]
     metadata: Optional[bool] = False
-    quality: conint(ge=0, le=100) = Field(default=75)  # has some PNG caveat with PNG8 color palette  # should we stick with 85 - CloudFlare's defaults?
+    quality: conint(ge=0, le=100) = Field(default=80)  # has some PNG caveat with PNG8 color palette  # should we stick with 85 - CloudFlare's defaults?
     rotate: Optional[conint(multiple_of=90)]
     sharpen: Optional[confloat(ge=0, le=10)]
     # trim: Optional[TrimPixels]
     trim: Optional[str] = '0,0,0,0'
 
-    @validator('trim')
+    @validator('trim', always=True)
     def save_trim_to_model(cls, values):
         """
         Convert list of strings into a `TrimPixels` instance.
@@ -193,6 +198,19 @@ class ImageTransformer:
     config: ImageOptions
     img: Image
     transformed_filename: str  # normalized image uri
+    file_extension: Optional[str] = None
+    save_options: dict = field(default_factory=dict)
+
+    def __post_init__(self):
+        """
+        Set some extra stuff.
+        """
+        if self.is_animated:
+            self._round_duration()
+        
+        self.file_extension = get_filename_extension(self.transformed_filename)
+
+        self._populate_base_save_options()
 
     @cached_property
     def valid_extensions(self):
@@ -203,14 +221,40 @@ class ImageTransformer:
         return getattr(self.img, "is_animated", False)
 
     @property
+    def has_exif_metadata(self) -> bool:
+        return bool(self.img.info.get('exif'))
+
+    @property
     def should_freeze_frame(self):
+        """
+        Applies to all animated images (gif, apng)
+        """
         return self.config.anim is False and self.is_animated
 
-    def get_save_format(self):
-        ext = get_filename_extension(self.transformed_filename)
-        assert ext in self.valid_extensions, "Not a valid image extension"
+    def _round_duration(self):
+        """
+        Round the duration of an animation.
+        Float values in some apngs cause an error while saving to webp.
 
-        return self.valid_extensions[ext]
+        More info: https://github.com/python-pillow/Pillow/issues/7015
+        """
+        if info := self.img.info.get('duration'):
+            self.img.info['duration'] = round(info)
+
+    def get_save_format(self):
+        """
+        This is used if we are saving image to a buffer.
+        Pillow by default interprets the output format from the file extension.
+        If there is no file extension, it checks the `format` kwarg.
+
+        Use the file extension to lookup the format in Pillows registered extensions
+        mapping:
+
+        ex. extension ".webp" maps to "WEBP" format.
+        """
+        assert self.file_extension in self.valid_extensions, "Not a valid image extension"
+
+        return self.valid_extensions[self.file_extension]
 
     def transform(self) -> None:
         """
@@ -227,34 +271,64 @@ class ImageTransformer:
             self.apply_resize()
             self.apply_effects()
 
-    def get_save_options(self) -> io.BytesIO:
+    def process_polish_image(self, original_img_size):
         """
-        1. Strip metadata if metadata
-        2. 
+        Do the thing for polished images!
         """
-        save_kwargs = {
-            'quality': self.config.quality,
-            'format': self.get_save_format(),
-            'optimize': True
-        }
-        
-        if self.config.metadata:
-            self.strip_exif_data()
+        self.strip_exif_metadata()
+
+        buffer = self.save_to_buffer()
+
+
+
+        if self.file_extension == '.webp':
+            # self.save_options['lossless'] = True
+            # self.strip_exif_metadata()
+            # buffer = self.save_to_buffer()
+            if buffer.tell() < original_img_size:
+                return buffer
+            # TODO: return original image here!
         else:
-            save_kwargs['exif'] = self.img.getexif()
-        
-        return save_kwargs
+            if not self.has_exif_metadata:
+                return self.img
 
-    def save_to_file(self):
-        save_options = self.get_save_options()
-        self.img.save(self.transformed_filename, **save_options)
+            self.strip_exif_metadata()
+            return self.save_to_buffer()
 
-    def save_to_buffer(self):
-        save_options = self.get_save_options()
+    def process_transform_image(self) -> io.BytesIO:
+        """
+        Do the thing for transformed images!
+        """
+        self.transform()
+
+        self.save_options['quality'] = self.config.quality
+
+        if self.config.metadata is False:
+            self.strip_exif_metadata()
+        else:
+            save_options['exif'] = self.img.getexif()
+
+        return self.save_to_buffer()
+    
+    def _populate_base_save_options(self):
+        self.save_options = {
+            'format': self.get_save_format(),
+            'optimize': True  # has no effect on webp formats
+        }
+
+        if self.is_animated:
+            self.save_options['save_all'] = True
+
+    @staticmethod
+    def save_buffer_to_file(filename, buffer):
+        with open(filename, 'wb') as output_file:
+            output_file.write(buffer.getbuffer())
+
+    def save_to_buffer(self) -> io.BytesIO:
         buffer = io.BytesIO()
-        
-        self.img.save(buffer, **save_options)
-        
+
+        self.img.save(buffer, **self.save_options)
+
         buffer.seek(0)
         return buffer
 
@@ -517,10 +591,10 @@ class ImageTransformer:
         """
         Freeze the first frame of an animated image
         """
-        if self.is_animated:
-            self.img.seek(0)
+        # if self.is_animated:
+        self.img.seek(0)
 
-    def strip_exif_data(self) -> None:
+    def strip_exif_metadata(self) -> None:
         """
         Removes image EXIF metadata if it exists.
         """

@@ -106,18 +106,28 @@ AWS Lambda has a 6 MB invocation payload request and response limit ([reference]
   - https://stackoverflow.com/questions/17042602/preserve-exif-data-of-image-with-pil-when-resizecreate-thumbnail
   - https://exiv2.org/tags.html
   - image with exif metadata - `young_family_eating_breakfast.jpg`
+  - gifs don't have exif metadata!
+- Gifs
+  - saving gifs with disposal - `https://stackoverflow.com/questions/60948028/python-pillow-transparent-gif-isnt-working`
 - Compression
   - https://stackoverflow.com/questions/30771652/how-to-perform-jpeg-compression-in-python-without-writing-reading
   - https://jdhao.github.io/2019/07/20/pil_jpeg_image_quality/
 - CloudFlare Polish feature
   - https://developers.cloudflare.com/images/polish/compression/ (`Polish will not be applied to URLs using Image Resizing`)
-  - https://blog.cloudflare.com/a-very-webp-new-year-from-cloudflare/
+  - https://blog.cloudflare.com/a-very-webp-new-year-from-cloudflare/ (GOOD ARTICLE)
   - https://blog.cloudflare.com/introducing-polish-automatic-image-optimizati/
   - https://webmasters.stackexchange.com/questions/136565/can-i-use-cloudflare-to-remove-gps-location-data-from-the-exif-metadata-of-image
-  - https://blog.cloudflare.com/a-very-webp-new-year-from-cloudflare/ (GOOD ARTICLE)
   - https://community.cloudflare.com/t/polish-webp-optimization-apparently-not-working/78041
   - https://community.cloudflare.com/t/cloudflare-polish-compressing-only-minimally/209463/4
   - https://developers.cloudflare.com/images/faq/
+  - CloudFlare polish forum questions
+    - https://community.cloudflare.com/t/problems-with-webp-images-polish-does-not-convert-all-of-our-images/328010/13
+    - https://community.cloudflare.com/t/polish-not-all-images-are-converted-to-webp/193553
+    - https://community.cloudflare.com/t/polish-not-converting-images-to-webp/112012
+    - https://developers.cloudflare.com/support/troubleshooting/general-troubleshooting/troubleshoot-common-cf-polished-statuses/
+    - https://community.cloudflare.com/t/cf-polish-not-needed-on-huge-images/205688
+    - https://community.cloudflare.com/t/cloudflare-polish-do-images-need-to-be-routed-through-cdn-cgi-image/371811/4
+    - https://community.cloudflare.com/t/how-do-i-know-webp-is-being-served/113401/9
 - Resize images with CloudFlare either with pre-defined URL or image workers (https://developers.cloudflare.com/images/image-resizing/)
 - CloudFlare polished header info
   - https://exabytes.freshdesk.com/en/support/solutions/articles/14000100604-using-cloudflare-polish-to-compress-images#:~:text=The%20cf%2Dpolished%20header%20represents,and%20Polish%20can%20be%20applied.
@@ -134,6 +144,11 @@ AWS Lambda has a 6 MB invocation payload request and response limit ([reference]
     - when `Accept` header doesn't have `img/webp` it will serve original (not default to avif because it is not processed by image worker)
 - resize gifs
   - https://gist.github.com/skywodd/8b68bd9c7af048afcedcea3fb1807966
+- CloudFlare doesn't support animated pngs as output!!
+  - https://community.cloudflare.com/t/image-resize-apng/452451
+- converting png to gifs
+  - http://www.pythonclub.org/modules/pil/convert-png-gif
+  - https://stackoverflow.com/questions/66452964/how-to-convert-png-images-to-a-transparent-gif
 
 ## Thoughts
 - cache webp/avif versions?
@@ -141,6 +156,7 @@ AWS Lambda has a 6 MB invocation payload request and response limit ([reference]
 - cloudflare worker limits - https://developers.cloudflare.com/workers/platform/limits/
   - https://developers.cloudflare.com/images/image-resizing/format-limitations/#format-limitations
   - not sure why this image doesn't scale greater than dpr=3 - `https://g.foolcdn.com/image/?url=https%3A%2F%2Fg.foolcdn.com%2Feditorial%2Fimages%2F711554%2Fa-hand-drawing-money-signs-and-an-upward-arrow-on-a-chalkboard.jpg&h=104&w=184&dpr=3`
+- cloudflare limits in general - https://developers.cloudflare.com/images/cloudflare-images/upload-images/formats-limitations/
 - try to get images with exif data from "transformed image" as original file extension (don't pass Accept header with image/webp)
 
 ## Pillow Compression Notes
@@ -157,12 +173,18 @@ AWS Lambda has a 6 MB invocation payload request and response limit ([reference]
   - `webp` without optimize seems to be the same as with `optimize=True`
   - when saving a png as a png, `quality` does not make a difference, because png images are lossless
 - `webp` are lossy, so `quality` does make a difference
+  - webp has `lossless` option in save to use lossless compression
 - jpg
   - can only use `quality=keep` when original and saved image are jpg, BUT this (with or without `optimize=True`) actually results in a larger image size!
   - when saving as jpg with Pillow's default `quality` value (75), it does reduce image size a little
   - when saving as jpg with Pillow's default `quality` + `optimize=True`, the optimize helps a little more with image size
   - `webp` + `optimize=True` reduces it alot!
   - `webp` without optimize seems to be the same as with `optimize=True`
+  
+### Updated Compression notes
+- `optimize` feature is supported by following formats: GIF, JPEG, PNG
+- `quality` feature is supported by following formats: JPEG, TIFF, WEBP
+- `lossless` feature is supported by WEBP
 
 Exif Data Image Size test
 - https://github.com/python-pillow/Pillow/issues/6804
@@ -208,6 +230,17 @@ https://pillow.readthedocs.io/en/stable/reference/open_files.html#file-handling
 
 ## Code notes
 - Pillow extensions `Image.registered_extensions()`
+- You have to explicitly set gifs to open in `RGB_ALWAYS` mode!!! omg
+  - default mode is `RGB_AFTER_FIRST` 🫠 which made converted gifs have a weird colored frame
+```
+>>> from PIL import GifImagePlugin
+>>> GifImagePlugin.LOADING_STRATEGY = GifImagePlugin.LoadingStrategy.RGB_ALWAYS
+>>>
+>>> img = Image.open('img/banana.gif')
+>>> from PIL import ImageSequence
+>>> for frame in ImageSequence.Iterator(img):
+...   print(frame.mode)
+```
 
 why is this returning avif??
 - `http://g.foolcdn.com/image/?url=https%3A%2F%2Fg.foolcdn.com%2Feditorial%2Fimages%2F519403%2Fgetty-danger-warning-lose-money-mistakes-errors-caution.jpg&w=700&op=resize&format=webp`
