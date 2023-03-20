@@ -94,7 +94,6 @@ def round_up(value):
 
 class ImageOptions(BaseModel):
     anim: Optional[bool] = True
-    # enable_webp: Optional[bool] = True
     background: Optional[Color] = None
 
     blur: Optional[confloat(ge=0, le=255)]
@@ -225,6 +224,10 @@ class ImageTransformer:
         return bool(self.img.info.get('exif'))
 
     @property
+    def icc_profile(self) -> Optional[bytes]:
+        return self.img.info.get('icc_profile')
+
+    @property
     def should_freeze_frame(self):
         """
         Applies to all animated images (gif, apng)
@@ -271,53 +274,55 @@ class ImageTransformer:
             self.apply_resize()
             self.apply_effects()
 
-    def process_polish_image(self, original_img_size):
+    def process_polish_image(self, original_img: io.BytesIO) -> io.BytesIO:
         """
-        Do the thing for polished images!
+        Perform save process for "polished" images.
         """
-        self.strip_exif_metadata()
-
         buffer = self.save_to_buffer()
 
-
-
         if self.file_extension == '.webp':
-            # self.save_options['lossless'] = True
-            # self.strip_exif_metadata()
-            # buffer = self.save_to_buffer()
-            if buffer.tell() < original_img_size:
-                return buffer
-            # TODO: return original image here!
-        else:
-            if not self.has_exif_metadata:
-                return self.img
-
-            self.strip_exif_metadata()
-            return self.save_to_buffer()
+            if buffer.tell() > original_img.tell():
+                return original_img
+        return buffer
 
     def process_transform_image(self) -> io.BytesIO:
         """
-        Do the thing for transformed images!
+        Perform transform and save process for
+        "transform" images.
         """
         self.transform()
 
         self.save_options['quality'] = self.config.quality
 
-        if self.config.metadata is False:
-            self.strip_exif_metadata()
-        else:
+        # Pillow does not save EXIF metadata on JPG, PNG, WEBP, TIFF, and n/a to GIFs.
+        # If the metadata option is true, explicitly pass exif save option.
+        if self.config.metadata:
             save_options['exif'] = self.img.getexif()
 
         return self.save_to_buffer()
-    
+
     def _populate_base_save_options(self):
+        """
+        Store common save options.
+        """
         self.save_options = {
             'format': self.get_save_format(),
             'optimize': True  # has no effect on webp formats
         }
 
-        if self.is_animated:
+        # By default, only the first frame of an animated image is saved,
+        # so explicitly pass `save_all` if we're saving a multiframe image.
+        if not self.should_freeze_frame and self.is_animated:
             self.save_options['save_all'] = True
+
+        # Setting disposal allows transparent gifs to restore background color
+        # at the start of each frame; this avoids previous frames from "lingering"
+        # throughout the animation.
+        if self.file_extension == '.gif':
+            self.save_options['disposal'] = 2
+
+        if icc_profile := self.icc_profile:
+            self.save_options['icc_profile'] = icc_profile
 
     @staticmethod
     def save_buffer_to_file(filename, buffer):
@@ -589,14 +594,18 @@ class ImageTransformer:
 
     def freeze_animated_image(self) -> None:
         """
-        Freeze the first frame of an animated image
+        Freeze the first frame of an animated image.
+
+        This is mostly a precaution to ensure an animated
+        image is at the first frame.         
         """
-        # if self.is_animated:
         self.img.seek(0)
 
     def strip_exif_metadata(self) -> None:
         """
         Removes image EXIF metadata if it exists.
+
+        TODO: Delete this...don't need it.
         """
         if 'exif' in self.img.info:
             del self.img.info['exif']

@@ -1,6 +1,6 @@
 # Exif metadata in Pillow
 
-Pillow does not save EXIF metadata on JPEG, PNG, WEBP, TIFF images.
+Pillow does not save EXIF metadata on JPEG, PNG, WEBP, TIFF images. [GIFs don't use EXIF metadata](https://superuser.com/questions/556315/gif-image-exif-tags).
 
 See these Pillow [issue](https://github.com/python-pillow/Pillow/issues/6804) and [PR](https://github.com/python-pillow/Pillow/pull/6819) for more info
 
