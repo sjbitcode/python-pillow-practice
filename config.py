@@ -197,6 +197,8 @@ class ImageTransformer:
     config: ImageOptions
     img: Image
     transformed_filename: str  # normalized image uri
+
+    # Set post init
     file_extension: Optional[str] = None
     save_options: dict = field(default_factory=dict)
 
@@ -263,16 +265,18 @@ class ImageTransformer:
         """
         Apply all transformation steps to the image.
 
-        1. If animated, check anim to determine whether to freeze first frame
+        1. If animated, check anim to determine whether to freeze first frame, otherwise don't transform animated images
         2. resizing (fit options + trim)
         3. filters (blur, brightness, contrast, sharpen) + rotate
         """
 
-        if self.should_freeze_frame:
-            self.freeze_animated_image()
-        else:
-            self.apply_resize()
-            self.apply_effects()
+        if self.is_animated:
+            if self.should_freeze_frame:
+                self.freeze_animated_image()
+            return
+
+        self.apply_resize()
+        self.apply_effects()
 
     def process_polish_image(self, original_img: io.BytesIO) -> io.BytesIO:
         """
