@@ -16,8 +16,8 @@ from config import ImageOptions, ImageTransformer
 
 
 VALID_PARAMS = list(ImageOptions.__fields__.keys())
-LOCAL_ORIGINAL_IMG_DIRECTORY = 'img2'
-LOCAL_TRANSFORMED_IMG_DIRECTORY = 'transformed'
+LOCAL_ORIGINAL_IMG_DIRECTORY = 'tmf-original'
+LOCAL_TRANSFORMED_IMG_DIRECTORY = 'tmf-transformed'
 IMAGE_URL_MAPPING = {
     f'{LOCAL_ORIGINAL_IMG_DIRECTORY}/young_family_eating_breakfast.jpg': 'https://m.foolcdn.com/media/affiliates/original_images/young_family_eating_breakfast.jpg',
     f'{LOCAL_ORIGINAL_IMG_DIRECTORY}/women_shopping_in_clothing_store.jpg': 'https://m.foolcdn.com/media/affiliates/original_images/women_shopping_in_clothing_store.jpg',
@@ -25,7 +25,7 @@ IMAGE_URL_MAPPING = {
     f'{LOCAL_ORIGINAL_IMG_DIRECTORY}/ascent-whiteloader.png': 'https://g.foolcdn.com/static/affiliates/project/images/gifs/ascent-whiteloader.png',
     f'{LOCAL_ORIGINAL_IMG_DIRECTORY}/ascent-whiteloader.gif': 'https://g.foolcdn.com/static/affiliates/project/images/gifs/ascent-whiteloader.gif',
     f'{LOCAL_ORIGINAL_IMG_DIRECTORY}/two_people_with_realtor_in_house_EOhMdBw.jpg': 'https://m.foolcdn.com/media/affiliates/original_images/two_people_with_realtor_in_house_EOhMdBw.jpg',
-    # f'{LOCAL_ORIGINAL_IMG_DIRECTORY}/building-a-retirement-income-stream-cover-ipad.png': 'https://g.foolcdn.com/misc-assets/building-a-retirement-income-stream-cover-ipad.png',
+    f'{LOCAL_ORIGINAL_IMG_DIRECTORY}/building-a-retirement-income-stream-cover-ipad.png': 'https://g.foolcdn.com/misc-assets/building-a-retirement-income-stream-cover-ipad.png',
 }
 
 
@@ -119,7 +119,7 @@ def transform_and_serve_image(img_name: str, request: Request, options: ImageOpt
     all_params: dict = get_query_param_dict(str(request.query_params))
     normalized_query_params: OrderedDict = normalize_query_params(all_params)
     transform_options_str: str = get_transform_options_str(normalized_query_params)
-    
+
     print(f'{all_params = }')
     print(f'{normalized_query_params = }')
     print(f'{transform_options_str = }')
@@ -138,14 +138,13 @@ def transform_and_serve_image(img_name: str, request: Request, options: ImageOpt
         transformed_options=transform_options_str,
         extension=extension
     )
+
     output_file = f'{LOCAL_TRANSFORMED_IMG_DIRECTORY}/{transformed_img_name}'
-    print('🤞', output_file)
+    print(f'🤞 {output_file = }')
 
     if not Path(output_file).exists():
         img = Image.open(img_name)
         transformer = ImageTransformer(config=options, img=img, transformed_filename=output_file)
-        # transformer.transform()
-        # transformer.save_to_file()
         buffer = transformer.process_transform_image()
         transformer.save_buffer_to_file(filename=output_file, buffer=buffer)
         print('✅', transformed_img_name)
@@ -154,16 +153,42 @@ def transform_and_serve_image(img_name: str, request: Request, options: ImageOpt
     return FileResponse(output_file)
 
 
+@app.get('/compare')
+def view_all_comparison_images(request: Request):
+    response = []
+
+    for img_name, mapped_img in IMAGE_URL_MAPPING.items():
+
+        transform_img_url = f"/transform/{img_name}?{str(request.query_params)}" if request.query_params else f"/transform/{img_name}"
+        cloudflare_img_url = f"{mapped_img}?{str(request.query_params)}" if request.query_params else mapped_img
+
+        entry = {
+            "TMF Transformed image url": transform_img_url,
+            "CloudFlare image url": cloudflare_img_url,
+            "compare url": f"/compare/{img_name}"
+        }
+
+        response.append(entry)
+
+    return response
+
 @app.get('/compare/{img_name:path}')
 def compare_images(img_name: str, request: Request):
     
+    if not img_name:
+        return JSONResponse(status_code=400, content={"error": "Must include an image path!"})
+
     print('query params', request.query_params)
     # return RedirectResponse(url=f'/transform/{img_name}')
-    
+
     if mapped_img := IMAGE_URL_MAPPING.get(img_name):
+
+        transform_img_url = f"/transform/{img_name}?{str(request.query_params)}" if request.query_params else f"/transform/{img_name}"
+        cloudflare_img_url = f"{mapped_img}?{str(request.query_params)}" if request.query_params else mapped_img
+
         return {
-            "transformed image url": f"/transform/{img_name}?{str(request.query_params)}",
-            "CloudFlare image url": f"{mapped_img}?{str(request.query_params)}"
+            "TMF Transformed image url": transform_img_url,
+            "CloudFlare image url": cloudflare_img_url
         }
     else:
         return JSONResponse(status_code=404, content={"error": "Image not in mapping!"})
