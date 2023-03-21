@@ -1,35 +1,54 @@
+import io
 from collections import OrderedDict
 from glob import glob
+import json
 from pathlib import Path
 from typing import Union, Optional
 from urllib.parse import parse_qs, urlencode, urlparse
 
+import httpx
 from fastapi import Depends, FastAPI, Request, Body, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from PIL import Image
-from pydantic import BaseModel, Field, FilePath
+from pydantic import BaseModel, Field, FilePath, HttpUrl, root_validator
 
 
 from config import ImageOptions, ImageTransformer
 
 
-
+IMAGE_URL_MAPPING = {}
+IMAGE_URL_MAPPING_FILE = 'image_mapping.json'
 VALID_PARAMS = list(ImageOptions.__fields__.keys())
 LOCAL_ORIGINAL_IMG_DIRECTORY = 'tmf-original'
 LOCAL_TRANSFORMED_IMG_DIRECTORY = 'tmf-transformed'
-IMAGE_URL_MAPPING = {
-    f'{LOCAL_ORIGINAL_IMG_DIRECTORY}/young_family_eating_breakfast.jpg': 'https://m.foolcdn.com/media/affiliates/original_images/young_family_eating_breakfast.jpg',
-    f'{LOCAL_ORIGINAL_IMG_DIRECTORY}/women_shopping_in_clothing_store.jpg': 'https://m.foolcdn.com/media/affiliates/original_images/women_shopping_in_clothing_store.jpg',
-    f'{LOCAL_ORIGINAL_IMG_DIRECTORY}/woman_with_phone_and_laptop_EF0nQi5.jpg': 'https://m.foolcdn.com/media/affiliates/original_images/woman_with_phone_and_laptop_EF0nQi5.jpg',
-    f'{LOCAL_ORIGINAL_IMG_DIRECTORY}/ascent-whiteloader.png': 'https://g.foolcdn.com/static/affiliates/project/images/gifs/ascent-whiteloader.png',
-    f'{LOCAL_ORIGINAL_IMG_DIRECTORY}/ascent-whiteloader.gif': 'https://g.foolcdn.com/static/affiliates/project/images/gifs/ascent-whiteloader.gif',
-    f'{LOCAL_ORIGINAL_IMG_DIRECTORY}/two_people_with_realtor_in_house_EOhMdBw.jpg': 'https://m.foolcdn.com/media/affiliates/original_images/two_people_with_realtor_in_house_EOhMdBw.jpg',
-    f'{LOCAL_ORIGINAL_IMG_DIRECTORY}/building-a-retirement-income-stream-cover-ipad.png': 'https://g.foolcdn.com/misc-assets/building-a-retirement-income-stream-cover-ipad.png',
-}
+
+
+def populate_image_mapping() -> None:
+    """
+    Load json file to image mapping dict.
+    """
+    with open(IMAGE_URL_MAPPING_FILE) as f:
+        global IMAGE_URL_MAPPING
+        IMAGE_URL_MAPPING = json.load(f)
+
+
+def save_image_to_mapping(local_file_path: str, image_url: str) -> None:
+    """
+    Save image to mapping by updating mapping dict and updating json file.
+    """
+    IMAGE_URL_MAPPING[local_file_path] = image_url
+
+    with open(IMAGE_URL_MAPPING_FILE, 'w') as f:
+        json.dump(IMAGE_URL_MAPPING, f, indent=4)
+
+
+def configure():
+    populate_image_mapping()
 
 
 app = FastAPI()
+configure()
 # app.mount("/static", StaticFiles(directory="img"), name='static')
 
 def str2bool(value) -> bool:
@@ -94,7 +113,56 @@ def get_extension(accept_header: str, image_filename: str, enable_webp: bool = T
 
 @app.get("/")
 async def root():
-    return {"message": "Hello World!"}
+    query_param_sentence = "You can pass in transform query parameters at this endpoint."
+
+    return {
+        "navigation": {
+            "view": {
+                "endpoint": f"/raw/img/puppy.jpg",
+                "description": "View a local image"
+            },
+            "transform" :{
+                "endpoint": f"/transform/img/puppy.jpg?width=500",
+                "description": f"Transform a local image. {query_param_sentence}"
+            },
+            "compare all": {
+                "endpoint": '/compare',
+                "description": f"View all pairs of local images and CloudFlare versions. {query_param_sentence}"
+            },
+            "compare single": {
+                "endpoint": '/compare/tmf-original/young_family_eating_breakfast.jpg',
+                "description": f"View a local image and it's CloudFlare version. {query_param_sentence}"
+            },
+            "download": {
+                "endpoint": '/download/https://m.foolcdn.com/media/affiliates/original_images/young_family_eating_breakfast.jpg',
+                "description": "Download a foolcdn image and save to image mapping"
+            }
+        }
+    }
+
+
+@app.get("/download/{image_url:path}")
+async def download_image(image_url: HttpUrl):
+    allowed_hosts = ['g.foolcdn.com', 'm.foolcdn.com', 'staging.m.foolcdn.com', 'staging.g.foolcdn.com']
+
+    if image_url.host not in allowed_hosts:
+        return JSONResponse(status_code=400, content={"error": f"Image url must be one of the valid foolcdn domains, {allowed_hosts}"})
+
+    async with httpx.AsyncClient() as client:
+        url = f'{image_url.scheme}://{image_url.host}{image_url.path}'
+        headers = {'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7'}
+        resp = await client.get(url, headers=headers)
+        resp.raise_for_status()
+
+    # Save image
+    filename = f'{LOCAL_ORIGINAL_IMG_DIRECTORY}/{Path(image_url.path).name}'
+    buffer = io.BytesIO(resp.content)
+    ImageTransformer.save_buffer_to_file(filename=filename, buffer=buffer)
+
+    # Store in mapping
+    save_image_to_mapping(local_file_path=filename, image_url=url)
+
+    return RedirectResponse(url=f'/transform/{filename}')
 
 
 @app.get("/raw/{img_name:path}")
@@ -172,14 +240,14 @@ def view_all_comparison_images(request: Request):
 
     return response
 
+
 @app.get('/compare/{img_name:path}')
 def compare_images(img_name: str, request: Request):
-    
+
     if not img_name:
         return JSONResponse(status_code=400, content={"error": "Must include an image path!"})
 
     print('query params', request.query_params)
-    # return RedirectResponse(url=f'/transform/{img_name}')
 
     if mapped_img := IMAGE_URL_MAPPING.get(img_name):
 
